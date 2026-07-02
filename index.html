@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FileVault • Simple File Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+        body { font-family: 'Inter', system_ui, sans-serif; }
+        .file-row { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .file-row:hover { background-color: #f8fafc; transform: translateX(4px); }
+        .drop-zone {
+            transition: all 0.3s ease;
+        }
+        .drop-zone.dragover {
+            background-color: #f0f9ff;
+            border-color: #3b82f6;
+            transform: scale(1.02);
+        }
+    </style>
+</head>
+<body class="h-full">
+    <div class="max-w-6xl mx-auto p-6">
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-8">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white text-2xl font-bold">FV</div>
+                <div>
+                    <h1 class="text-3xl font-semibold text-gray-900">FileVault</h1>
+                    <p class="text-sm text-gray-500">Local demo file manager</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-4">
+                <div class="text-sm text-gray-500 flex items-center gap-2">
+                    <span id="file-count" class="font-medium text-gray-700">0 files</span>
+                </div>
+                <button onclick="document.getElementById('file-upload').click()" 
+                        class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-2xl font-medium transition-colors">
+                    <i class="fas fa-upload"></i>
+                    <span>Upload Files</span>
+                </button>
+                <input type="file" id="file-upload" multiple class="hidden" onchange="handleFiles(this.files)">
+            </div>
+        </div>
+
+        <!-- Search and Controls -->
+        <div class="bg-white rounded-3xl shadow-sm border border-gray-100 p-2 mb-6 flex items-center gap-4">
+            <div class="flex-1 relative">
+                <input id="search-input" 
+                       type="text" 
+                       placeholder="Search files..." 
+                       onkeyup="filterFiles()"
+                       class="w-full pl-12 py-4 bg-gray-50 border border-transparent focus:border-blue-200 rounded-2xl focus:outline-none text-gray-700">
+                <i class="fas fa-search absolute left-5 top-1/2 -translate-y-1/2 text-gray-400"></i>
+            </div>
+            
+            <button onclick="clearAllFiles()" 
+                    class="px-6 py-4 text-red-600 hover:bg-red-50 rounded-2xl flex items-center gap-2 font-medium transition-colors">
+                <i class="fas fa-trash"></i>
+                <span>Clear All</span>
+            </button>
+        </div>
+
+        <!-- Drop Zone -->
+        <div id="drop-zone"
+             class="drop-zone border-2 border-dashed border-gray-300 rounded-3xl h-48 flex flex-col items-center justify-center mb-8 cursor-pointer"
+             ondrop="handleDrop(event)" 
+             ondragover="handleDragOver(event)" 
+             ondragleave="handleDragLeave(event)"
+             onclick="document.getElementById('file-upload').click()">
+            <i class="fas fa-cloud-upload-alt text-5xl text-gray-300 mb-4"></i>
+            <p class="text-gray-500 font-medium">Drop files here or click to upload</p>
+            <p class="text-xs text-gray-400 mt-1">Any file type supported • Demo only</p>
+        </div>
+
+        <!-- Files Table -->
+        <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="px-8 py-5 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+                <h2 class="font-semibold text-gray-700">Your Files</h2>
+                <span id="selected-count" class="text-sm text-gray-500">0 selected</span>
+            </div>
+            
+            <table class="w-full" id="files-table">
+                <thead>
+                    <tr class="border-b border-gray-100 text-xs uppercase tracking-widest text-gray-500">
+                        <th class="text-left py-4 px-8 font-medium">File</th>
+                        <th class="text-left py-4 px-4 font-medium w-32">Size</th>
+                        <th class="text-left py-4 px-4 font-medium w-40">Type</th>
+                        <th class="text-right py-4 px-8 font-medium w-52">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="files-body" class="divide-y divide-gray-100">
+                    <!-- Populated by JS -->
+                </tbody>
+            </table>
+            
+            <div id="empty-state" class="hidden py-16 text-center">
+                <i class="fas fa-folder-open text-6xl text-gray-200 mb-4"></i>
+                <p class="text-gray-400 font-medium">No files yet</p>
+                <p class="text-gray-400 text-sm mt-1">Upload some files to get started</p>
+            </div>
+        </div>
+
+        <!-- Footer info -->
+        <div class="mt-8 text-center text-xs text-gray-400">
+            Demo only • Files stored in browser memory • Refreshing the page will clear all files
+        </div>
+    </div>
+
+    <script>
+        let files = [];
+        let selectedFiles = new Set();
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function generateFakeLink(filename) {
+            return `https://filevault.demo/\( {Date.now()}- \){filename.replace(/[^a-zA-Z0-9.-]/g, '')}`;
+        }
+
+        function renderFiles(filteredFiles = files) {
+            const tbody = document.getElementById('files-body');
+            tbody.innerHTML = '';
+            
+            if (filteredFiles.length === 0) {
+                document.getElementById('empty-state').classList.remove('hidden');
+                document.getElementById('file-count').textContent = '0 files';
+                return;
+            }
+            
+            document.getElementById('empty-state').classList.add('hidden');
+            document.getElementById('file-count').textContent = `\( {filteredFiles.length} file \){filteredFiles.length !== 1 ? 's' : ''}`;
+
+            filteredFiles.forEach((fileObj, index) => {
+                const tr = document.createElement('tr');
+                tr.className = `file-row ${selectedFiles.has(index) ? 'bg-blue-50' : ''}`;
+                
+                const fileIcon = fileObj.type.startsWith('image/') ? 'fa-image' : 
+                               fileObj.type.includes('pdf') ? 'fa-file-pdf' : 
+                               fileObj.type.includes('video') ? 'fa-video' : 'fa-file';
+                
+                tr.innerHTML = `
+                    <td class="px-8 py-5">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 bg-gray-100 rounded-2xl flex items-center justify-center text-gray-500">
+                                <i class="fas ${fileIcon}"></i>
+                            </div>
+                            <div>
+                                <div class="font-medium text-gray-800">${fileObj.name}</div>
+                                <div class="text-xs text-gray-400">${new Date(fileObj.timestamp).toLocaleDateString()}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-4 py-5 text-sm text-gray-600">${formatBytes(fileObj.size)}</td>
+                    <td class="px-4 py-5 text-sm text-gray-500">${fileObj.type || 'unknown'}</td>
+                    <td class="px-8 py-5">
+                        <div class="flex items-center gap-2 justify-end">
+                            <button onclick="copyLink(${index})" 
+                                    class="p-3 text-blue-600 hover:bg-blue-100 rounded-2xl transition-colors"
+                                    title="Copy link">
+                                <i class="fas fa-link"></i>
+                            </button>
+                            <button onclick="downloadFile(${index})" 
+                                    class="p-3 text-emerald-600 hover:bg-emerald-100 rounded-2xl transition-colors"
+                                    title="Download">
+                                <i class="fas fa-download"></i>
+                            </button>
+                            <button onclick="deleteFile(${index})" 
+                                    class="p-3 text-red-600 hover:bg-red-100 rounded-2xl transition-colors"
+                                    title="Delete">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function handleFiles(uploadedFiles) {
+            for (let file of uploadedFiles) {
+                const fileObj = {
+                    name: file.name,
+                    size: file.size,
+                    type: file.type,
+                    timestamp: Date.now(),
+                    url: URL.createObjectURL(file),
+                    originalFile: file
+                };
+                files.push(fileObj);
+            }
+            renderFiles();
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            document.getElementById('drop-zone').classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            document.getElementById('drop-zone').classList.add('dragover');
+        }
+
+        function handleDragLeave(e) {
+            document.getElementById('drop-zone').classList.remove('dragover');
+        }
+
+        function downloadFile(index) {
+            const fileObj = files[index];
+            const a = document.createElement('a');
+            a.href = fileObj.url;
+            a.download = fileObj.name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        function deleteFile(index) {
+            if (confirm(`Delete ${files[index].name}?`)) {
+                URL.revokeObjectURL(files[index].url);
+                files.splice(index, 1);
+                renderFiles();
+            }
+        }
+
+        function copyLink(index) {
+            const fileObj = files[index];
+            const fakeLink = generateFakeLink(fileObj.name);
+            
+            navigator.clipboard.writeText(fakeLink).then(() => {
+                const btn = event.currentTarget;
+                const originalHTML = btn.innerHTML;
+                btn.innerHTML = `<i class="fas fa-check text-green-500"></i>`;
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                }, 1500);
+            });
+            
+            // Show toast
+            showToast(`Link copied for ${fileObj.name}`);
+        }
+
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = `fixed bottom-6 right-6 bg-gray-800 text-white text-sm px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 z-50`;
+            toast.innerHTML = `
+                <i class="fas fa-check-circle text-emerald-400"></i>
+                ${message}
+            `;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.transition = 'all 0.3s ease';
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(20px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 2500);
+        }
+
+        function filterFiles() {
+            const query = document.getElementById('search-input').value.toLowerCase().trim();
+            
+            if (!query) {
+                renderFiles(files);
+                return;
+            }
+            
+            const filtered = files.filter(file => 
+                file.name.toLowerCase().includes(query)
+            );
+            renderFiles(filtered);
+        }
+
+        function clearAllFiles() {
+            if (confirm('Clear ALL files? This cannot be undone.')) {
+                files.forEach(file => URL.revokeObjectURL(file.url));
+                files = [];
+                renderFiles();
+            }
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '/' && document.getElementById('search-input') !== document.activeElement) {
+                e.preventDefault();
+                document.getElementById('search-input').focus();
+            }
+        });
+
+        // Initialize
+        window.onload = () => {
+            renderFiles();
+            
+            // Demo files
+            setTimeout(() => {
+                if (files.length === 0) {
+                    const demoFiles = [
+                        new File(["Hello World"], "project-notes.txt", { type: "text/plain" }),
+                        new File(["<h1>Demo</h1>"], "report.pdf", { type: "application/pdf" })
+                    ];
+                    handleFiles(demoFiles);
+                }
+            }, 600);
+        };
+    </script>
+</body>
+</html>
