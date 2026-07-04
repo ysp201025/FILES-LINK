@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{
   --bg-0:#070a14;
@@ -317,6 +318,47 @@ header{
 }
 .danger-btn:hover{background:rgba(244,63,94,.2);}
 
+/* ---------- Login / Auth ---------- */
+body:not(.logged-in) header,
+body:not(.logged-in) .app{display:none;}
+.login-overlay{display:none;}
+body:not(.logged-in) .login-overlay{
+  display:flex;position:fixed;inset:0;z-index:500;align-items:center;justify-content:center;padding:20px;
+  background:
+    radial-gradient(1100px 600px at 85% -10%, rgba(59,130,246,.18), transparent 60%),
+    radial-gradient(900px 500px at 5% 10%, rgba(34,211,238,.12), transparent 55%),
+    var(--bg-0);
+}
+.login-card{
+  width:100%;max-width:380px;background:var(--glass);border:1px solid var(--border);
+  border-radius:20px;padding:34px 28px;box-shadow:var(--shadow-lg);text-align:center;
+  backdrop-filter:blur(20px);
+}
+.login-brand{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:24px;}
+.login-brand .brand-icon{width:52px;height:52px;border-radius:14px;}
+.login-brand .brand-icon .material-symbols-rounded{font-size:26px;}
+.login-brand h2{font-size:18.5px;font-weight:700;}
+.login-brand p{font-size:12.5px;color:var(--text-1);margin-top:2px;}
+#googleBtnContainer{display:flex;justify-content:center;min-height:44px;margin-bottom:4px;}
+.google-fallback{
+  font-size:12px;color:var(--text-2);padding:12px;border:1px dashed var(--border);border-radius:10px;line-height:1.5;
+}
+.login-divider{display:flex;align-items:center;gap:10px;margin:20px 0;color:var(--text-2);font-size:12px;}
+.login-divider::before,.login-divider::after{content:'';flex:1;height:1px;background:var(--border-soft);}
+.login-field{text-align:left;margin-bottom:12px;}
+.login-field label{font-size:12px;color:var(--text-2);display:block;margin-bottom:6px;}
+.login-field input{
+  width:100%;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;
+  padding:10px 12px;color:var(--text-0);font-size:13.5px;
+}
+.login-field input:focus{border-color:rgba(59,130,246,.6);}
+.login-submit{
+  width:100%;margin-top:4px;padding:11px;border-radius:10px;background:var(--grad);
+  color:#04101f;font-weight:600;font-size:13.5px;
+}
+.login-note{font-size:11px;color:var(--text-2);margin-top:18px;line-height:1.55;}
+.login-error{color:var(--danger);font-size:12px;margin-top:10px;display:none;}
+
 /* ---------- Toasts ---------- */
 .toast-wrap{position:fixed;bottom:22px;right:22px;display:flex;flex-direction:column;gap:10px;z-index:200;}
 .toast{
@@ -362,6 +404,29 @@ header{
 </head>
 <body>
 
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="brand-icon"><span class="material-symbols-rounded">cloud</span></div>
+      <h2>Sign in to NimbusDrive</h2>
+      <p>Your files, your account only</p>
+    </div>
+    <div id="googleBtnContainer"></div>
+    <div class="login-divider">or continue with</div>
+    <div class="login-field">
+      <label>Full name</label>
+      <input type="text" id="loginName" placeholder="e.g. Su Su Aung">
+    </div>
+    <div class="login-field">
+      <label>Email address</label>
+      <input type="email" id="loginEmail" placeholder="you@example.com">
+    </div>
+    <button class="login-submit" id="manualLoginBtn">Continue</button>
+    <div class="login-error" id="loginError">Please enter your name and a valid email.</div>
+    <p class="login-note">Each account only sees its own files. Everything stays stored in this browser — nothing is uploaded anywhere.</p>
+  </div>
+</div>
+
 <header>
   <div class="header-inner">
     <div class="brand"><div class="brand-icon"><span class="material-symbols-rounded">cloud</span></div>NimbusDrive</div>
@@ -379,13 +444,13 @@ header{
       </div>
       <button class="icon-btn" id="settingsBtn"><span class="material-symbols-rounded">settings</span></button>
       <div>
-        <button class="avatar-btn" id="profileBtn">YS</button>
+        <button class="avatar-btn" id="profileBtn">–</button>
         <div class="dropdown" id="profileDropdown">
           <div class="dropdown-title">Signed in as</div>
-          <div class="dropdown-item"><span class="material-symbols-rounded">account_circle</span><div><div style="font-weight:600;color:var(--text-0)">YSP2025</div><div style="font-size:11.5px;color:var(--text-2)">Local demo account</div></div></div>
+          <div class="dropdown-item"><span class="material-symbols-rounded">account_circle</span><div><div style="font-weight:600;color:var(--text-0)" id="profileNameDisplay">–</div><div style="font-size:11.5px;color:var(--text-2)" id="profileEmailDisplay">–</div></div></div>
           <div class="dropdown-item" id="ddSettings"><span class="material-symbols-rounded">tune</span>Settings</div>
           <div class="dropdown-item"><span class="material-symbols-rounded">help</span>Help &amp; Support</div>
-          <div class="dropdown-item"><span class="material-symbols-rounded">logout</span>Sign out</div>
+          <div class="dropdown-item" id="signOutBtn"><span class="material-symbols-rounded">logout</span>Sign out</div>
         </div>
       </div>
     </div>
@@ -514,8 +579,17 @@ header{
 (() => {
   const DB_NAME = 'nimbusdrive_db', STORE = 'files';
   const STORAGE_LIMIT = 2 * 1024 * 1024 * 1024; // 2GB demo cap
-  let db, files = [], activeFilter = 'all', searchTerm = '', notifications = [];
-  let pendingDeleteId = null;
+  const SESSION_KEY = 'nimbus_session';
+  // TODO: replace with your own OAuth Client ID from Google Cloud Console (APIs & Services > Credentials)
+  // Google Sign-In only works when this page is served over http/https from a registered origin — not from a local file:// path.
+  const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
+
+  let db, allFiles = [], activeFilter = 'all', searchTerm = '', notifications = [];
+  let pendingDeleteId = null, currentUser = null, appInitialized = false;
+
+  function getMyFiles(){
+    return currentUser ? allFiles.filter(f => f.owner === currentUser.email) : [];
+  }
 
   /* ---------- IndexedDB ---------- */
   function openDB(){
@@ -622,14 +696,15 @@ header{
 
   /* ---------- Rendering ---------- */
   function updateStats(){
-    const total = files.reduce((s,f) => s + f.size, 0);
-    const downloads = files.reduce((s,f) => s + (f.downloads||0), 0);
-    const favs = files.filter(f => f.favorite).length;
+    const mine = getMyFiles();
+    const total = mine.reduce((s,f) => s + f.size, 0);
+    const downloads = mine.reduce((s,f) => s + (f.downloads||0), 0);
+    const favs = mine.filter(f => f.favorite).length;
     $('#statStorage').textContent = formatBytes(total);
-    $('#statFiles').textContent = files.length;
+    $('#statFiles').textContent = mine.length;
     $('#statDownloads').textContent = downloads;
     $('#statFavs').textContent = favs;
-    $('#settingsFileCount').textContent = files.length;
+    $('#settingsFileCount').textContent = mine.length;
 
     const pct = Math.min(100, (total / STORAGE_LIMIT) * 100);
     const circumference = 163.4;
@@ -673,7 +748,7 @@ header{
 
   function renderGrid(){
     const grid = $('#fileGrid');
-    let list = files.slice().sort((a,b) => b.uploaded - a.uploaded);
+    let list = getMyFiles().sort((a,b) => b.uploaded - a.uploaded);
 
     if(activeFilter === 'favorite') list = list.filter(f => f.favorite);
     else if(activeFilter !== 'all') list = list.filter(f => fileKind(f.type, f.name) === activeFilter);
@@ -733,10 +808,11 @@ header{
       const thumbUrl = await makeThumb(file);
       const record = {
         id, name: file.name, size: file.size, type: file.type || 'application/octet-stream',
-        blob: file, thumbUrl, uploaded: Date.now(), downloads: 0, favorite: false
+        blob: file, thumbUrl, uploaded: Date.now(), downloads: 0, favorite: false,
+        owner: currentUser.email
       };
       await idbPut(record);
-      files.push(record);
+      allFiles.push(record);
       card.remove();
       renderGrid();
       updateStats();
@@ -786,14 +862,14 @@ header{
 
   function askDelete(id){
     pendingDeleteId = id;
-    const f = files.find(x => x.id === id);
+    const f = allFiles.find(x => x.id === id);
     $('#confirmText').textContent = f ? `"${f.name}" will be permanently removed.` : "This action can't be undone.";
     $('#confirmOverlay').classList.add('open');
   }
   async function doDelete(id){
-    const f = files.find(x => x.id === id);
+    const f = allFiles.find(x => x.id === id);
     await idbDelete(id);
-    files = files.filter(x => x.id !== id);
+    allFiles = allFiles.filter(x => x.id !== id);
     if(f && f._objUrl) URL.revokeObjectURL(f._objUrl);
     renderGrid();
     updateStats();
@@ -827,7 +903,7 @@ header{
       const card = e.target.closest('.file-card');
       if(!card) return;
       const id = card.dataset.id;
-      const f = files.find(x => x.id === id);
+      const f = allFiles.find(x => x.id === id);
       if(!f) return;
       const actionEl = e.target.closest('[data-action]');
       if(!actionEl) return;
@@ -868,7 +944,7 @@ header{
     $('#previewClose').addEventListener('click', closePreview);
     $('#previewOverlay').addEventListener('click', e => { if(e.target.id === 'previewOverlay') closePreview(); });
     $('#previewDownloadBtn').addEventListener('click', () => {
-      const f = files.find(x => x.id === $('#previewOverlay').dataset.id);
+      const f = allFiles.find(x => x.id === $('#previewOverlay').dataset.id);
       if(f) downloadFile(f);
     });
     $('#previewDeleteBtn').addEventListener('click', () => {
@@ -877,7 +953,7 @@ header{
       askDelete(id);
     });
     $('#previewCopyBtn').addEventListener('click', e => {
-      const f = files.find(x => x.id === $('#previewOverlay').dataset.id);
+      const f = allFiles.find(x => x.id === $('#previewOverlay').dataset.id);
       if(f) copyLink(f, e.target);
     });
 
@@ -899,13 +975,16 @@ header{
     $('#settingsOverlay').addEventListener('click', closeSettings);
     $$('.toggle').forEach(t => t.addEventListener('click', () => t.classList.toggle('on')));
     $('#clearAllBtn').addEventListener('click', async () => {
-      if(!files.length){ showToast('Nothing to clear', 'info'); return; }
-      if(confirm('Delete ALL files? This cannot be undone.')){
-        await idbClear();
-        files.forEach(f => { if(f._objUrl) URL.revokeObjectURL(f._objUrl); });
-        files = [];
+      const mine = getMyFiles();
+      if(!mine.length){ showToast('Nothing to clear', 'info'); return; }
+      if(confirm('Delete ALL your files? This cannot be undone.')){
+        for(const f of mine){
+          await idbDelete(f.id);
+          if(f._objUrl) URL.revokeObjectURL(f._objUrl);
+        }
+        allFiles = allFiles.filter(f => f.owner !== currentUser.email);
         renderGrid(); updateStats();
-        showToast('All files deleted', 'delete_forever');
+        showToast('All your files deleted', 'delete_forever');
         closeSettings();
       }
     });
@@ -921,26 +1000,137 @@ header{
     $('#searchInput').addEventListener('input', e => { searchTerm = e.target.value; renderGrid(); });
   }
 
-  /* ---------- Init ---------- */
-  async function init(){
-    wireUpload(); wireGridEvents(); wireDropdowns(); wireModals(); wireSettings(); wireFilters();
+  /* ---------- Auth: Google + Demo login ---------- */
+  function initials(name){
+    const parts = name.trim().split(/\s+/);
+    return ((parts[0]?.[0]||'') + (parts[1]?.[0]||'')).toUpperCase() || 'U';
+  }
+  function hashHue(str){
+    let h = 0;
+    for(let i=0;i<str.length;i++) h = str.charCodeAt(i) + ((h<<5)-h);
+    return Math.abs(h) % 360;
+  }
+  function updateProfileUI(){
+    const btn = $('#profileBtn');
+    if(currentUser.picture){
+      btn.style.background = 'none';
+      btn.innerHTML = `<img src="${currentUser.picture}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover;border-radius:10px;">`;
+    } else {
+      const hue = hashHue(currentUser.email);
+      btn.style.background = `linear-gradient(135deg, hsl(${hue},70%,55%), hsl(${(hue+40)%360},75%,50%))`;
+      btn.textContent = initials(currentUser.name);
+    }
+    $('#profileNameDisplay').textContent = currentUser.name;
+    $('#profileEmailDisplay').textContent = currentUser.email;
+  }
+
+  function parseJwt(token){
+    const base64 = token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+    const json = decodeURIComponent(atob(base64).split('').map(c => '%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+    return JSON.parse(json);
+  }
+  function onGoogleCredential(response){
+    try{
+      const payload = parseJwt(response.credential);
+      loginUser({ name: payload.name, email: payload.email, picture: payload.picture, provider: 'google' });
+    }catch(err){
+      console.error(err);
+      showLoginError('Google sign-in failed. Please try again.');
+    }
+  }
+  function setupGoogleSignIn(){
+    const container = $('#googleBtnContainer');
+    if(!container || container.childElementCount) return; // already rendered
+    if(!window.google || !google.accounts || GOOGLE_CLIENT_ID.startsWith('YOUR_')){
+      container.innerHTML = '<div class="google-fallback">Google Sign-In isn\'t configured yet — add your Google OAuth Client ID in the code, and host this page online (not as a local file) for the button to appear. Use demo sign-in below meanwhile.</div>';
+      return;
+    }
+    try{
+      google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential });
+      google.accounts.id.renderButton(container, { theme:'filled_black', size:'large', shape:'pill', width:280 });
+    }catch(err){
+      console.error(err);
+      container.innerHTML = '<div class="google-fallback">Google Sign-In could not load. Use demo sign-in below.</div>';
+    }
+  }
+
+  function showLoginError(msg){
+    const el = $('#loginError');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+  function handleManualLogin(){
+    const name = $('#loginName').value.trim();
+    const email = $('#loginEmail').value.trim();
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    $('#loginError').style.display = 'none';
+    if(!name || !emailOk){ showLoginError('Please enter your name and a valid email.'); return; }
+    loginUser({ name, email, picture: null, provider: 'demo' });
+  }
+  function wireLogin(){
+    $('#manualLoginBtn').addEventListener('click', handleManualLogin);
+    $('#loginEmail').addEventListener('keydown', e => { if(e.key === 'Enter') handleManualLogin(); });
+    $('#loginName').addEventListener('keydown', e => { if(e.key === 'Enter') handleManualLogin(); });
+    $('#signOutBtn').addEventListener('click', () => { logoutUser(); showToast('Signed out', 'logout'); });
+  }
+
+  async function loadData(){
     try{
       db = await openDB();
-      files = await idbGetAll();
+      allFiles = await idbGetAll();
     }catch(err){
       console.error(err);
       showToast('Local storage unavailable in this browser', 'error', true);
-      files = [];
+      allFiles = [];
     }
     renderGrid();
     updateStats();
 
-    // handle shared link ?file=ID -> auto trigger download prompt
+    // handle shared link ?file=ID -> auto open preview (only if it belongs to the signed-in account)
     const params = new URLSearchParams(location.search);
     const wantedId = params.get('file');
     if(wantedId){
-      const f = files.find(x => x.id === wantedId);
+      const f = allFiles.find(x => x.id === wantedId && x.owner === currentUser.email);
       if(f) openPreview(f);
+    }
+  }
+
+  function loginUser(user, silent){
+    currentUser = user;
+    localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+    document.body.classList.add('logged-in');
+    updateProfileUI();
+    $('#loginError').style.display = 'none';
+    if(!appInitialized){
+      appInitialized = true;
+      loadData();
+    } else {
+      renderGrid();
+      updateStats();
+    }
+    if(!silent) showToast(`Welcome, ${user.name.split(' ')[0]}!`, 'waving_hand');
+  }
+  function logoutUser(){
+    localStorage.removeItem(SESSION_KEY);
+    currentUser = null;
+    document.body.classList.remove('logged-in');
+    $('#loginName').value = '';
+    $('#loginEmail').value = '';
+    renderGrid();
+    updateStats();
+  }
+
+  /* ---------- Init ---------- */
+  function init(){
+    wireUpload(); wireGridEvents(); wireDropdowns(); wireModals(); wireSettings(); wireFilters(); wireLogin();
+    setupGoogleSignIn();
+    window.addEventListener('load', setupGoogleSignIn);
+    setTimeout(setupGoogleSignIn, 800); // retry once the async GIS script has loaded
+
+    const saved = localStorage.getItem(SESSION_KEY);
+    if(saved){
+      try{ loginUser(JSON.parse(saved), true); }
+      catch(err){ console.error(err); }
     }
   }
   init();
