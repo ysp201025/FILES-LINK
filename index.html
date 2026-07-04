@@ -873,7 +873,8 @@ body.state-share .share-overlay{
   /* ---------- Session lifecycle ---------- */
   function updateProfileUI(){
     const btn = $('#profileBtn');
-    const photo = currentUser.user_metadata?.avatar_url;
+    const meta = currentUser.user_metadata || {};
+    const photo = meta.avatar_url || meta.picture;
     if(photo){
       btn.style.background = 'none';
       btn.innerHTML = `<img src="${photo}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover;">`;
@@ -882,7 +883,7 @@ body.state-share .share-overlay{
       btn.style.background = `linear-gradient(135deg, hsl(${hue},70%,55%), hsl(${(hue+40)%360},75%,50%))`;
       btn.textContent = initials(profile?.name || currentUser.email);
     }
-    $('#profileNameDisplay').textContent = profile?.name || currentUser.user_metadata?.name || currentUser.email;
+    $('#profileNameDisplay').textContent = profile?.name || currentUser.email;
     $('#profileEmailDisplay').textContent = currentUser.email;
   }
 
@@ -903,7 +904,8 @@ body.state-share .share-overlay{
 
   async function proceedPastAuth(user){
     currentUser = user;
-    profile = { name: user.user_metadata?.name || user.email };
+    const meta = user.user_metadata || {};
+    profile = { name: meta.full_name || meta.name || user.email };
     const isGoogle = user.app_metadata?.provider === 'google';
     const otpDone = sessionStorage.getItem('otpVerified_' + user.id) === '1';
     if(isGoogle || otpDone){
@@ -1236,23 +1238,49 @@ body.state-share .share-overlay{
     });
   }
 
-  function boot(){
+  async function boot(){
     wireStatic();
     const params = new URLSearchParams(location.search);
+    const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
     const sharedId = params.get('file');
     if(sharedId){
       renderShareView(sharedId);
       return; // shared file links never require sign-in
     }
+
+    setBodyState('auth'); // sensible default while we resolve the session below
+
     if(!supabaseReady){
-      setBodyState('auth');
       showFormError('#siError', 'Supabase isn\'t configured yet — add your Project URL and anon key in the code (see the comment at the top of the script) to enable sign-in.');
       return;
     }
+
+    // If Google/Supabase redirected back with an error (e.g. redirect URL not
+    // whitelisted, provider misconfigured), show it instead of silently
+    // bouncing back to the login screen.
+    const oauthError = params.get('error_description') || hashParams.get('error_description') || params.get('error') || hashParams.get('error');
+    if(oauthError){
+      showFormError('#siError', decodeURIComponent(oauthError.replace(/\+/g, ' ')));
+    }
+    if(params.get('code') || oauthError){
+      history.replaceState(null, '', location.pathname); // clean up the URL either way
+    }
+
     sb.auth.onAuthStateChange((event, session) => {
       if(session && session.user) proceedPastAuth(session.user);
-      else setBodyState('auth');
+      else if(event === 'SIGNED_OUT') setBodyState('auth');
     });
+
+    // onAuthStateChange alone can race with the PKCE code-exchange after an
+    // OAuth redirect, so also check directly — this call resolves only once
+    // Supabase has finished processing the URL.
+    try{
+      const { data, error } = await sb.auth.getSession();
+      if(error){ showFormError('#siError', mapAuthError(error)); return; }
+      if(data.session && data.session.user) await proceedPastAuth(data.session.user);
+    }catch(err){
+      console.error(err);
+    }
   }
   boot();
 })();
