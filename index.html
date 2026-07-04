@@ -8,8 +8,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
 
-<!-- Supabase JS client (handles Auth + Database + Storage, no backend needed) -->
+<!-- Supabase JS client (Storage + Database only — login itself is handled locally, see below) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<!-- EmailJS — sends the verification code email straight from the browser using your own Gmail -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
 
 <style>
 :root{
@@ -387,13 +389,6 @@ body.state-share .share-overlay{
       <button class="auth-tab" id="tabSignup">Sign Up</button>
     </div>
 
-    <button class="google-btn" id="googleAuthBtn">
-      <svg viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.6-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.6 6.5 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.6 6.5 29.6 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.5 0 10.4-2.4 13.9-6.1l-6.4-5.4c-1.9 1.4-4.4 2.5-7.5 2.5-5.3 0-9.7-3.4-11.3-8L6 32c3.3 6.6 10.1 12 18 12z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.9 2.5-2.5 4.5-4.6 6l6.4 5.4C40.9 36.6 44 30.9 44 24c0-1.3-.1-2.7-.4-3.5z"/></svg>
-      Continue with Google
-    </button>
-
-    <div class="auth-divider">or use email</div>
-
     <!-- Sign In -->
     <form class="auth-form active" id="signinForm">
       <div class="auth-field"><label>Email address</label><input type="email" id="siEmail" placeholder="you@example.com" autocomplete="email"></div>
@@ -412,7 +407,7 @@ body.state-share .share-overlay{
       <div class="auth-error" id="suError"></div>
     </form>
 
-    <p class="auth-note">Only accounts that have signed up can sign in. A verification code is sent to your email every time you sign in from a new session. Anyone with a file's share link can download it — without needing an account.</p>
+    <p class="auth-note">Only accounts that have signed up can sign in. A verification code is emailed to you every time you sign in from a new session. Anyone with a file's share link can download it — without needing an account.</p>
   </div>
 </div>
 
@@ -576,44 +571,58 @@ body.state-share .share-overlay{
 (() => {
   /* =====================================================================
      SETUP REQUIRED — replace the placeholders below with your own keys.
-     1) supabase.com → New project (free tier) → Project Settings → API
-        → copy "Project URL" and "anon public" key into SUPABASE_URL /
-        SUPABASE_ANON_KEY below.
-     2) Authentication → Providers → make sure Email is enabled, and
-        enable Google if you want the Google button (needs a Client ID/
-        Secret from Google Cloud Console — Supabase's dashboard shows you
-        exactly which redirect URI to paste there).
-     3) Authentication → Email Templates → edit "Confirm signup" and
-        "Magic Link" templates to include {{ .Token }} — that's what
-        makes Supabase send a typeable 6-digit code instead of only a
-        clickable link.
-     4) Run the SQL in the setup guide (see chat) to create the "files"
-        table + Row Level Security policies, and create a public
-        Storage bucket named "files" with matching storage policies.
-     Until SUPABASE_URL/KEY are filled in, sign-in will show a clear
-     "not configured" message instead of failing silently.
+     Login itself is fully local now (no Supabase Auth, no Google OAuth) —
+     Supabase is only used here for file Storage + Database, and EmailJS
+     sends the verification code from your own connected Gmail.
+     1) supabase.com → Project Settings → API → copy "Project URL" and
+        "anon public" key into SUPABASE_URL / SUPABASE_ANON_KEY below.
+     2) Run the SQL in the setup guide (see chat) to create the
+        "app_users" and "files" tables + their policies, and create a
+        public Storage bucket named "files".
+     3) emailjs.com → free account → add an Email Service (connect your
+        Gmail) → create a Template with {{to_email}} and {{code}}
+        variables → copy Public Key / Service ID / Template ID below.
+     Until these are filled in, sign-in shows a clear "not configured"
+     message, and the OTP step falls back to an on-screen demo code so
+     you can still test everything end-to-end.
      ===================================================================== */
   const SUPABASE_URL = 'https://ztvvvhfgzrpgumqtoohj.supabase.co';
   const SUPABASE_ANON_KEY = 'sb_publishable_O5qXwPLlu5JS38YrfzTqWg_IZTynkvK';
+  const EMAILJS_PUBLIC_KEY = '8dw6is7q5xgP7g8Ic';
+  const EMAILJS_SERVICE_ID = 'service_co3cqfm';
+  const EMAILJS_TEMPLATE_ID = 'template_70nqifi';
   const STORAGE_LIMIT = 2 * 1024 * 1024 * 1024; // demo display cap
   const BUCKET = 'files';
+  const SESSION_KEY = 'nimbus_local_user';
 
   const $ = sel => document.querySelector(sel);
   const $$ = sel => document.querySelectorAll(sel);
 
-  let sb = null, supabaseReady = false;
+  let sb = null, supabaseReady = false, emailjsReady = false;
   try{
     if(!SUPABASE_URL.startsWith('YOUR_') && window.supabase){
       sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
       supabaseReady = true;
     }
   }catch(err){ console.error('Supabase init failed', err); }
+  try{
+    if(window.emailjs && !EMAILJS_PUBLIC_KEY.startsWith('YOUR_')){
+      emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+      emailjsReady = true;
+    }
+  }catch(err){ console.error('EmailJS init failed', err); }
 
-  let currentUser = null, profile = null, myFiles = [];
+  let currentUser = null, myFiles = [];
   let activeFilter = 'all', searchTerm = '', notifications = [];
-  let pendingDeleteId = null, pendingOtp = null, resendCooldownTimer = null;
+  let pendingDeleteId = null, pendingUser = null, pendingOtp = null, resendCooldownTimer = null;
 
   /* ---------- Generic helpers ---------- */
+  async function sha256Hex(text){
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+  async function hashPassword(password, salt){ return sha256Hex(salt + ':' + password); }
+
   function formatBytes(bytes){
     if(!bytes) return '0 B';
     const k = 1024, sizes = ['B','KB','MB','GB'];
@@ -675,18 +684,9 @@ body.state-share .share-overlay{
     document.body.classList.add('state-' + state);
   }
 
-  /* ---------- Auth error mapping (Supabase returns message strings, not codes) ---------- */
+  /* ---------- Auth error mapping ---------- */
   function mapAuthError(err){
-    const msg = (err && err.message) || '';
-    if(/already registered/i.test(msg)) return 'This email is already registered — try signing in instead.';
-    if(/invalid login credentials/i.test(msg)) return "Incorrect email or password, or this email isn't registered yet.";
-    if(/email not confirmed/i.test(msg)) return 'Please verify your email first — check your inbox for the code.';
-    if(/password should be at least/i.test(msg)) return 'Password should be at least 6 characters.';
-    if(/invalid email/i.test(msg)) return 'Please enter a valid email address.';
-    if(/rate limit/i.test(msg)) return 'Too many attempts — please wait a moment and try again.';
-    if(/unable to exchange external code/i.test(msg)) return 'Google sign-in failed to complete — this is usually a mismatched redirect URL between Supabase and Google Cloud Console, or the same login link was opened twice. Please try again in a fresh tab.';
-    if(/token has expired|invalid token|otp/i.test(msg)) return 'Incorrect or expired code — please try again or resend.';
-    return msg || 'Something went wrong. Please try again.';
+    return (err && err.message) || 'Something went wrong. Please try again.';
   }
   function showFormError(id, msg){
     const el = $(id);
@@ -706,7 +706,7 @@ body.state-share .share-overlay{
     return false;
   }
 
-  /* ---------- Auth: tabs + forms ---------- */
+  /* ---------- Auth: tabs + forms (local accounts, stored in Supabase Postgres) ---------- */
   function wireAuthTabs(){
     $('#tabSignin').addEventListener('click', () => {
       $('#tabSignin').classList.add('active'); $('#tabSignup').classList.remove('active');
@@ -722,15 +722,18 @@ body.state-share .share-overlay{
     e.preventDefault();
     showFormError('#siError', null);
     if(!requireSupabase()) return;
-    const email = $('#siEmail').value.trim();
+    const email = $('#siEmail').value.trim().toLowerCase();
     const password = $('#siPassword').value;
     if(!email || !password){ showFormError('#siError', 'Please enter your email and password.'); return; }
     const btn = $('#siSubmit');
     setBusy(btn, true);
     try{
-      const { error } = await sb.auth.signInWithPassword({ email, password });
+      const { data: row, error } = await sb.from('app_users').select('*').eq('email', email).maybeSingle();
       if(error) throw error;
-      // Password correct + account exists — now trigger the email OTP step.
+      if(!row){ showFormError('#siError', "This email isn't registered yet. Please sign up first."); return; }
+      const hash = await hashPassword(password, row.salt);
+      if(hash !== row.password_hash){ showFormError('#siError', 'Incorrect password.'); return; }
+      pendingUser = { id: row.id, name: row.name, email: row.email };
       await startOtpFlow(email);
     }catch(err){
       showFormError('#siError', mapAuthError(err));
@@ -742,7 +745,7 @@ body.state-share .share-overlay{
     showFormError('#suError', null);
     if(!requireSupabase()) return;
     const name = $('#suName').value.trim();
-    const email = $('#suEmail').value.trim();
+    const email = $('#suEmail').value.trim().toLowerCase();
     const password = $('#suPassword').value;
     const confirm = $('#suConfirm').value;
     if(!name || !email || !password){ showFormError('#suError', 'Please fill in all fields.'); return; }
@@ -751,50 +754,48 @@ body.state-share .share-overlay{
     const btn = $('#suSubmit');
     setBusy(btn, true);
     try{
-      const { error } = await sb.auth.signUp({ email, password, options: { data: { name } } });
-      if(error) throw error;
-      // Account is created — now send the same verification code used for sign-in.
+      const { data: existing, error: selErr } = await sb.from('app_users').select('id').eq('email', email).maybeSingle();
+      if(selErr) throw selErr;
+      if(existing){ showFormError('#suError', 'This email is already registered — try signing in instead.'); return; }
+      const salt = crypto.randomUUID();
+      const hash = await hashPassword(password, salt);
+      const { data: inserted, error: insErr } = await sb.from('app_users').insert({ name, email, password_hash: hash, salt }).select().single();
+      if(insErr) throw insErr;
+      pendingUser = { id: inserted.id, name, email };
       await startOtpFlow(email);
     }catch(err){
       showFormError('#suError', mapAuthError(err));
     }finally{ setBusy(btn, false, 'Create Account'); }
   }
 
-  async function handleGoogleAuth(){
-    if(!requireSupabase()) return;
-    try{
-      const { error } = await sb.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: location.origin + location.pathname }
-      });
-      if(error) throw error;
-      // Page will redirect to Google and back — onAuthStateChange picks up the session on return.
-    }catch(err){
-      showFormError('#siError', mapAuthError(err));
-    }
-  }
-
   function wireAuthForms(){
     $('#signinForm').addEventListener('submit', handleSignin);
     $('#signupForm').addEventListener('submit', handleSignup);
-    $('#googleAuthBtn').addEventListener('click', handleGoogleAuth);
   }
 
-  /* ---------- OTP (email verification code) flow ---------- */
+  /* ---------- OTP (email verification code, sent via EmailJS from your own Gmail) ---------- */
+  function genCode(){ return String(Math.floor(100000 + Math.random()*900000)); }
+
   async function startOtpFlow(email){
-    pendingOtp = { email, expires: Date.now() + 10*60*1000 };
+    const code = genCode();
+    pendingOtp = { code, email, expires: Date.now() + 10*60*1000 };
     $('#otpEmailLabel').textContent = email;
     $('#otpCode').value = '';
     showFormError('#otpError', null);
     $('#otpDemoNote').style.display = 'none';
     setBodyState('otp');
-    try{
-      const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-      if(error) throw error;
-      showToast('Verification code sent to ' + email, 'mark_email_read');
-    }catch(err){
-      console.error(err);
-      showFormError('#otpError', mapAuthError(err));
+    if(emailjsReady){
+      try{
+        await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, { to_email: email, code });
+        showToast('Verification code sent to ' + email, 'mark_email_read');
+      }catch(err){
+        console.error(err);
+        $('#otpDemoNote').style.display = 'block';
+        $('#otpDemoNote').textContent = 'Could not send the email (check your EmailJS setup) — demo code: ' + code;
+      }
+    } else {
+      $('#otpDemoNote').style.display = 'block';
+      $('#otpDemoNote').textContent = 'EmailJS not configured yet — demo code: ' + code;
     }
     startResendCooldown();
   }
@@ -817,42 +818,27 @@ body.state-share .share-overlay{
     }, 1000);
   }
 
-  async function verifyOtp(){
+  function verifyOtp(){
     const val = $('#otpCode').value.trim();
     showFormError('#otpError', null);
     if(!pendingOtp){ showFormError('#otpError', 'No code pending — please resend.'); return; }
     if(Date.now() > pendingOtp.expires){ showFormError('#otpError', 'Code expired — please resend a new one.'); return; }
-    if(!val){ showFormError('#otpError', 'Please enter the 6-digit code.'); return; }
-    const btn = $('#otpSubmit');
-    setBusy(btn, true);
-    try{
-      const { data, error } = await sb.auth.verifyOtp({ email: pendingOtp.email, token: val, type: 'email' });
-      if(error) throw error;
-      if(data.user) sessionStorage.setItem('otpVerified_' + data.user.id, '1');
-      pendingOtp = null;
-      // onAuthStateChange fires and takes it from here, but call directly too in case it already fired.
-      if(data.user) await proceedPastAuth(data.user);
-    }catch(err){
-      showFormError('#otpError', mapAuthError(err));
-    }finally{ setBusy(btn, false, 'Verify & Continue'); }
+    if(val !== pendingOtp.code){ showFormError('#otpError', 'Incorrect code — please try again.'); return; }
+    currentUser = pendingUser;
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+    sessionStorage.setItem('otpVerified_' + currentUser.id, '1');
+    pendingOtp = null; pendingUser = null;
+    enterApp();
+    showToast(`Welcome, ${(currentUser.name||'').split(' ')[0] || 'there'}!`, 'waving_hand');
   }
 
   function wireOtp(){
     $('#otpSubmit').addEventListener('click', verifyOtp);
     $('#otpCode').addEventListener('keydown', e => { if(e.key === 'Enter') verifyOtp(); });
-    $('#otpResend').addEventListener('click', async e => {
+    $('#otpResend').addEventListener('click', e => {
       e.preventDefault();
       if(e.target.classList.contains('disabled') || !pendingOtp) return;
-      showFormError('#otpError', null);
-      try{
-        const { error } = await sb.auth.signInWithOtp({ email: pendingOtp.email, options: { shouldCreateUser: false } });
-        if(error) throw error;
-        pendingOtp.expires = Date.now() + 10*60*1000;
-        showToast('Code resent to ' + pendingOtp.email, 'mark_email_read');
-        startResendCooldown();
-      }catch(err){
-        showFormError('#otpError', mapAuthError(err));
-      }
+      startOtpFlow(pendingOtp.email);
     });
     $('#otpBack').addEventListener('click', e => { e.preventDefault(); logout(); });
   }
@@ -860,17 +846,10 @@ body.state-share .share-overlay{
   /* ---------- Session lifecycle ---------- */
   function updateProfileUI(){
     const btn = $('#profileBtn');
-    const meta = currentUser.user_metadata || {};
-    const photo = meta.avatar_url || meta.picture;
-    if(photo){
-      btn.style.background = 'none';
-      btn.innerHTML = `<img src="${photo}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover;">`;
-    } else {
-      const hue = hashHue(currentUser.email);
-      btn.style.background = `linear-gradient(135deg, hsl(${hue},70%,55%), hsl(${(hue+40)%360},75%,50%))`;
-      btn.textContent = initials(profile?.name || currentUser.email);
-    }
-    $('#profileNameDisplay').textContent = profile?.name || currentUser.email;
+    const hue = hashHue(currentUser.email);
+    btn.style.background = `linear-gradient(135deg, hsl(${hue},70%,55%), hsl(${(hue+40)%360},75%,50%))`;
+    btn.textContent = initials(currentUser.name || currentUser.email);
+    $('#profileNameDisplay').textContent = currentUser.name || currentUser.email;
     $('#profileEmailDisplay').textContent = currentUser.email;
   }
 
@@ -889,22 +868,10 @@ body.state-share .share-overlay{
     refreshMyFiles();
   }
 
-  async function proceedPastAuth(user){
-    currentUser = user;
-    const meta = user.user_metadata || {};
-    profile = { name: meta.full_name || meta.name || user.email };
-    const isGoogle = user.app_metadata?.provider === 'google';
-    const otpDone = sessionStorage.getItem('otpVerified_' + user.id) === '1';
-    if(isGoogle || otpDone){
-      enterApp();
-    } else {
-      startOtpFlow(user.email);
-    }
-  }
-
   function logout(){
-    if(sb) sb.auth.signOut();
-    currentUser = null; profile = null; myFiles = [];
+    if(currentUser) sessionStorage.removeItem('otpVerified_' + currentUser.id);
+    sessionStorage.removeItem(SESSION_KEY);
+    currentUser = null; myFiles = [];
     $('#siEmail').value=''; $('#siPassword').value='';
     setBodyState('auth');
   }
@@ -1002,7 +969,7 @@ body.state-share .share-overlay{
       const { error: insErr } = await sb.from('files').insert({
         name: file.name, size: file.size, type: file.type || 'application/octet-stream',
         url: pub.publicUrl, storage_path: path, owner_id: currentUser.id,
-        owner_name: profile?.name || currentUser.email, downloads: 0, favorite: false
+        owner_name: currentUser.name || currentUser.email, downloads: 0, favorite: false
       });
       if(insErr) throw insErr;
       clearInterval(simTimer);
@@ -1225,49 +1192,33 @@ body.state-share .share-overlay{
     });
   }
 
-  async function boot(){
+  function boot(){
     wireStatic();
     const params = new URLSearchParams(location.search);
-    const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
     const sharedId = params.get('file');
     if(sharedId){
       renderShareView(sharedId);
       return; // shared file links never require sign-in
     }
 
-    setBodyState('auth'); // sensible default while we resolve the session below
-
     if(!supabaseReady){
-      showFormError('#siError', 'Supabase isn\'t configured yet — add your Project URL and anon key in the code (see the comment at the top of the script) to enable sign-in.');
+      setBodyState('auth');
+      showFormError('#siError', 'Supabase isn\'t configured yet — add your Project URL and anon key in the code (see the comment at the top of the script).');
       return;
     }
 
-    // If Google/Supabase redirected back with an error (e.g. redirect URL not
-    // whitelisted, provider misconfigured), show it instead of silently
-    // bouncing back to the login screen.
-    const oauthError = params.get('error_description') || hashParams.get('error_description') || params.get('error') || hashParams.get('error');
-    if(oauthError){
-      showFormError('#siError', decodeURIComponent(oauthError.replace(/\+/g, ' ')));
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    if(saved){
+      try{
+        const user = JSON.parse(saved);
+        if(sessionStorage.getItem('otpVerified_' + user.id) === '1'){
+          currentUser = user;
+          enterApp();
+          return;
+        }
+      }catch(err){ console.error(err); }
     }
-    if(params.get('code') || oauthError){
-      history.replaceState(null, '', location.pathname); // clean up the URL either way
-    }
-
-    sb.auth.onAuthStateChange((event, session) => {
-      if(session && session.user) proceedPastAuth(session.user);
-      else if(event === 'SIGNED_OUT') setBodyState('auth');
-    });
-
-    // onAuthStateChange alone can race with the PKCE code-exchange after an
-    // OAuth redirect, so also check directly — this call resolves only once
-    // Supabase has finished processing the URL.
-    try{
-      const { data, error } = await sb.auth.getSession();
-      if(error){ showFormError('#siError', mapAuthError(error)); return; }
-      if(data.session && data.session.user) await proceedPastAuth(data.session.user);
-    }catch(err){
-      console.error(err);
-    }
+    setBodyState('auth');
   }
   boot();
 })();
