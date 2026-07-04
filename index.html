@@ -447,7 +447,6 @@ body.state-share .share-overlay{
           <div class="dropdown-item"><span class="material-symbols-rounded">account_circle</span><div><div style="font-weight:600;color:var(--text-0)" id="profileNameDisplay">–</div><div style="font-size:11.5px;color:var(--text-2)" id="profileEmailDisplay">–</div></div></div>
           <div class="dropdown-item" id="ddSettings"><span class="material-symbols-rounded">tune</span>Settings</div>
           <div class="dropdown-item"><span class="material-symbols-rounded">help</span>Help &amp; Support</div>
-          <div class="dropdown-item" id="signOutBtn"><span class="material-symbols-rounded">logout</span>Sign out</div>
         </div>
       </div>
     </div>
@@ -871,7 +870,6 @@ body.state-share .share-overlay{
   }
 
   function wireHeaderAndSettings(){
-    $('#signOutBtn').addEventListener('click', () => { logout(); showToast('Signed out', 'logout'); });
   }
 
   /* ---------- Stats & grid rendering ---------- */
@@ -1176,6 +1174,9 @@ body.state-share .share-overlay{
   }
 
   /* ---------- Boot ---------- */
+  const LOCAL_USER_KEY = 'nimbus_local_user';
+  const DEFAULT_USER_EMAIL = 'me@nimbusdrive.local';
+
   function wireStatic(){
     wireAuthTabs(); wireAuthForms(); wireOtp(); wireHeaderAndSettings();
     wireUpload(); wireGridEvents(); wireDropdowns(); wireModals(); wireSettings(); wireFilters();
@@ -1186,7 +1187,38 @@ body.state-share .share-overlay{
     });
   }
 
-  function boot(){
+  // There's no login step anymore — everyone who opens the page gets taken
+  // straight into the app. We still need one app_users row (files.owner_id
+  // points at it), so a single "Me" account is created once and reused
+  // from then on via localStorage.
+  async function ensureLocalUser(){
+    const saved = localStorage.getItem(LOCAL_USER_KEY);
+    if(saved){
+      try{ return JSON.parse(saved); }catch(err){ console.error(err); }
+    }
+    if(supabaseReady){
+      const { data: existing, error: selErr } = await sb.from('app_users').select('*').eq('email', DEFAULT_USER_EMAIL).maybeSingle();
+      if(selErr) throw selErr;
+      let row = existing;
+      if(!row){
+        const salt = crypto.randomUUID();
+        const hash = await hashPassword(crypto.randomUUID(), salt);
+        const { data: inserted, error: insErr } = await sb.from('app_users')
+          .insert({ name: 'Me', email: DEFAULT_USER_EMAIL, password_hash: hash, salt })
+          .select().single();
+        if(insErr) throw insErr;
+        row = inserted;
+      }
+      const user = { id: row.id, name: row.name, email: row.email };
+      localStorage.setItem(LOCAL_USER_KEY, JSON.stringify(user));
+      return user;
+    }
+    // Supabase isn't configured — open the app anyway with a placeholder
+    // user so the UI works; file storage just won't be functional yet.
+    return { id: 'local-demo-user', name: 'Me', email: DEFAULT_USER_EMAIL };
+  }
+
+  async function boot(){
     wireStatic();
     const params = new URLSearchParams(location.search);
     const sharedId = params.get('file');
@@ -1194,25 +1226,16 @@ body.state-share .share-overlay{
       renderShareView(sharedId);
       return; // shared file links never require sign-in
     }
-
+    try{
+      currentUser = await ensureLocalUser();
+    }catch(err){
+      console.error(err);
+      currentUser = { id: 'local-demo-user', name: 'Me', email: DEFAULT_USER_EMAIL };
+    }
+    enterApp();
     if(!supabaseReady){
-      setBodyState('auth');
-      showFormError('#siError', 'Supabase isn\'t configured yet — add your Project URL and anon key in the code (see the comment at the top of the script).');
-      return;
+      showToast('Supabase isn\'t configured yet — add your Project URL and anon key in the code to enable file storage.', 'error', true);
     }
-
-    const saved = sessionStorage.getItem(SESSION_KEY);
-    if(saved){
-      try{
-        const user = JSON.parse(saved);
-        if(sessionStorage.getItem('otpVerified_' + user.id) === '1'){
-          currentUser = user;
-          enterApp();
-          return;
-        }
-      }catch(err){ console.error(err); }
-    }
-    setBodyState('auth');
   }
   boot();
 })();
