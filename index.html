@@ -684,6 +684,7 @@ body.state-share .share-overlay{
     if(/password should be at least/i.test(msg)) return 'Password should be at least 6 characters.';
     if(/invalid email/i.test(msg)) return 'Please enter a valid email address.';
     if(/rate limit/i.test(msg)) return 'Too many attempts — please wait a moment and try again.';
+    if(/unable to exchange external code/i.test(msg)) return 'Google sign-in failed to complete — this is usually a mismatched redirect URL between Supabase and Google Cloud Console, or the same login link was opened twice. Please try again in a fresh tab.';
     if(/token has expired|invalid token|otp/i.test(msg)) return 'Incorrect or expired code — please try again or resend.';
     return msg || 'Something went wrong. Please try again.';
   }
@@ -730,7 +731,7 @@ body.state-share .share-overlay{
       const { error } = await sb.auth.signInWithPassword({ email, password });
       if(error) throw error;
       // Password correct + account exists — now trigger the email OTP step.
-      await startOtpFlow(email, 'signin');
+      await startOtpFlow(email);
     }catch(err){
       showFormError('#siError', mapAuthError(err));
     }finally{ setBusy(btn, false, 'Sign In'); }
@@ -752,14 +753,8 @@ body.state-share .share-overlay{
     try{
       const { error } = await sb.auth.signUp({ email, password, options: { data: { name } } });
       if(error) throw error;
-      // Supabase automatically emails a confirmation code/link for the new account.
-      pendingOtp = { email, mode: 'signup', expires: Date.now() + 30*60*1000 };
-      $('#otpEmailLabel').textContent = email;
-      $('#otpCode').value = '';
-      showFormError('#otpError', null);
-      $('#otpDemoNote').style.display = 'none';
-      setBodyState('otp');
-      startResendCooldown();
+      // Account is created — now send the same verification code used for sign-in.
+      await startOtpFlow(email);
     }catch(err){
       showFormError('#suError', mapAuthError(err));
     }finally{ setBusy(btn, false, 'Create Account'); }
@@ -786,22 +781,20 @@ body.state-share .share-overlay{
   }
 
   /* ---------- OTP (email verification code) flow ---------- */
-  async function startOtpFlow(email, mode){
-    pendingOtp = { email, mode, expires: Date.now() + 10*60*1000 };
+  async function startOtpFlow(email){
+    pendingOtp = { email, expires: Date.now() + 10*60*1000 };
     $('#otpEmailLabel').textContent = email;
     $('#otpCode').value = '';
     showFormError('#otpError', null);
     $('#otpDemoNote').style.display = 'none';
     setBodyState('otp');
-    if(mode === 'signin'){
-      try{
-        const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-        if(error) throw error;
-        showToast('Verification code sent to ' + email, 'mark_email_read');
-      }catch(err){
-        console.error(err);
-        showFormError('#otpError', mapAuthError(err));
-      }
+    try{
+      const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+      if(error) throw error;
+      showToast('Verification code sent to ' + email, 'mark_email_read');
+    }catch(err){
+      console.error(err);
+      showFormError('#otpError', mapAuthError(err));
     }
     startResendCooldown();
   }
@@ -833,8 +826,7 @@ body.state-share .share-overlay{
     const btn = $('#otpSubmit');
     setBusy(btn, true);
     try{
-      const type = pendingOtp.mode === 'signup' ? 'signup' : 'email';
-      const { data, error } = await sb.auth.verifyOtp({ email: pendingOtp.email, token: val, type });
+      const { data, error } = await sb.auth.verifyOtp({ email: pendingOtp.email, token: val, type: 'email' });
       if(error) throw error;
       if(data.user) sessionStorage.setItem('otpVerified_' + data.user.id, '1');
       pendingOtp = null;
@@ -853,13 +845,8 @@ body.state-share .share-overlay{
       if(e.target.classList.contains('disabled') || !pendingOtp) return;
       showFormError('#otpError', null);
       try{
-        if(pendingOtp.mode === 'signup'){
-          const { error } = await sb.auth.resend({ type: 'signup', email: pendingOtp.email });
-          if(error) throw error;
-        } else {
-          const { error } = await sb.auth.signInWithOtp({ email: pendingOtp.email, options: { shouldCreateUser: false } });
-          if(error) throw error;
-        }
+        const { error } = await sb.auth.signInWithOtp({ email: pendingOtp.email, options: { shouldCreateUser: false } });
+        if(error) throw error;
         pendingOtp.expires = Date.now() + 10*60*1000;
         showToast('Code resent to ' + pendingOtp.email, 'mark_email_read');
         startResendCooldown();
@@ -911,7 +898,7 @@ body.state-share .share-overlay{
     if(isGoogle || otpDone){
       enterApp();
     } else {
-      startOtpFlow(user.email, 'signin');
+      startOtpFlow(user.email);
     }
   }
 
