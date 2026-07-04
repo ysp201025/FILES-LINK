@@ -392,8 +392,7 @@ body.state-share .share-overlay{
     <!-- Sign In -->
     <form class="auth-form active" id="signinForm">
       <div class="auth-field"><label>Email address</label><input type="email" id="siEmail" placeholder="you@example.com" autocomplete="email"></div>
-      <div class="auth-field"><label>Password</label><input type="password" id="siPassword" placeholder="••••••••" autocomplete="current-password"></div>
-      <button type="submit" class="auth-submit" id="siSubmit"><span>Sign In</span></button>
+      <button type="submit" class="auth-submit" id="siSubmit"><span>Send code</span></button>
       <div class="auth-error" id="siError"></div>
     </form>
 
@@ -401,13 +400,11 @@ body.state-share .share-overlay{
     <form class="auth-form" id="signupForm">
       <div class="auth-field"><label>Full name</label><input type="text" id="suName" placeholder="e.g. Su Su Aung"></div>
       <div class="auth-field"><label>Email address</label><input type="email" id="suEmail" placeholder="you@example.com" autocomplete="email"></div>
-      <div class="auth-field"><label>Password</label><input type="password" id="suPassword" placeholder="At least 6 characters" autocomplete="new-password"></div>
-      <div class="auth-field"><label>Confirm password</label><input type="password" id="suConfirm" placeholder="Re-enter password" autocomplete="new-password"></div>
-      <button type="submit" class="auth-submit" id="suSubmit"><span>Create Account</span></button>
+      <button type="submit" class="auth-submit" id="suSubmit"><span>Send code</span></button>
       <div class="auth-error" id="suError"></div>
     </form>
 
-    <p class="auth-note">Only accounts that have signed up can sign in. A verification code is emailed to you every time you sign in from a new session. Anyone with a file's share link can download it — without needing an account.</p>
+    <p class="auth-note">No password needed — enter your email and we'll send you a 6-digit code. Enter that code to sign in instantly. Anyone with a file's share link can download it — without needing an account.</p>
   </div>
 </div>
 
@@ -571,9 +568,10 @@ body.state-share .share-overlay{
 (() => {
   /* =====================================================================
      SETUP REQUIRED — replace the placeholders below with your own keys.
-     Login itself is fully local now (no Supabase Auth, no Google OAuth) —
-     Supabase is only used here for file Storage + Database, and EmailJS
-     sends the verification code from your own connected Gmail.
+     Login is passwordless: users only enter their email, then a 6-digit
+     code (sent via EmailJS from your own connected Gmail) to sign in.
+     There is no Supabase Auth and no Google OAuth — Supabase is only
+     used here for file Storage + Database.
      1) supabase.com → Project Settings → API → copy "Project URL" and
         "anon public" key into SUPABASE_URL / SUPABASE_ANON_KEY below.
      2) Run the SQL in the setup guide (see chat) to create the
@@ -723,21 +721,18 @@ body.state-share .share-overlay{
     showFormError('#siError', null);
     if(!requireSupabase()) return;
     const email = $('#siEmail').value.trim().toLowerCase();
-    const password = $('#siPassword').value;
-    if(!email || !password){ showFormError('#siError', 'Please enter your email and password.'); return; }
+    if(!email){ showFormError('#siError', 'Please enter your email address.'); return; }
     const btn = $('#siSubmit');
     setBusy(btn, true);
     try{
       const { data: row, error } = await sb.from('app_users').select('*').eq('email', email).maybeSingle();
       if(error) throw error;
       if(!row){ showFormError('#siError', "This email isn't registered yet. Please sign up first."); return; }
-      const hash = await hashPassword(password, row.salt);
-      if(hash !== row.password_hash){ showFormError('#siError', 'Incorrect password.'); return; }
       pendingUser = { id: row.id, name: row.name, email: row.email };
       await startOtpFlow(email);
     }catch(err){
       showFormError('#siError', mapAuthError(err));
-    }finally{ setBusy(btn, false, 'Sign In'); }
+    }finally{ setBusy(btn, false, 'Send code'); }
   }
 
   async function handleSignup(e){
@@ -746,26 +741,25 @@ body.state-share .share-overlay{
     if(!requireSupabase()) return;
     const name = $('#suName').value.trim();
     const email = $('#suEmail').value.trim().toLowerCase();
-    const password = $('#suPassword').value;
-    const confirm = $('#suConfirm').value;
-    if(!name || !email || !password){ showFormError('#suError', 'Please fill in all fields.'); return; }
-    if(password.length < 6){ showFormError('#suError', 'Password should be at least 6 characters.'); return; }
-    if(password !== confirm){ showFormError('#suError', 'Passwords do not match.'); return; }
+    if(!name || !email){ showFormError('#suError', 'Please fill in all fields.'); return; }
     const btn = $('#suSubmit');
     setBusy(btn, true);
     try{
       const { data: existing, error: selErr } = await sb.from('app_users').select('id').eq('email', email).maybeSingle();
       if(selErr) throw selErr;
       if(existing){ showFormError('#suError', 'This email is already registered — try signing in instead.'); return; }
+      // No password is collected anymore. A random, unusable hash/salt pair is
+      // still stored so this keeps working if your app_users table has
+      // password_hash/salt as NOT NULL columns from the old schema.
       const salt = crypto.randomUUID();
-      const hash = await hashPassword(password, salt);
+      const hash = await hashPassword(crypto.randomUUID(), salt);
       const { data: inserted, error: insErr } = await sb.from('app_users').insert({ name, email, password_hash: hash, salt }).select().single();
       if(insErr) throw insErr;
       pendingUser = { id: inserted.id, name, email };
       await startOtpFlow(email);
     }catch(err){
       showFormError('#suError', mapAuthError(err));
-    }finally{ setBusy(btn, false, 'Create Account'); }
+    }finally{ setBusy(btn, false, 'Send code'); }
   }
 
   function wireAuthForms(){
@@ -872,7 +866,7 @@ body.state-share .share-overlay{
     if(currentUser) sessionStorage.removeItem('otpVerified_' + currentUser.id);
     sessionStorage.removeItem(SESSION_KEY);
     currentUser = null; myFiles = [];
-    $('#siEmail').value=''; $('#siPassword').value='';
+    $('#siEmail').value='';
     setBodyState('auth');
   }
 
